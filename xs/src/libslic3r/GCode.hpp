@@ -215,6 +215,11 @@ protected:
             struct Region {
                 ExtrusionEntityCollection perimeters;
                 ExtrusionEntityCollection infills;
+
+                // Appends perimeter/infill entities and writes don't indices of those that are not to be extruder as part of perimeter/infill wiping
+                void append(std::string type, const ExtrusionEntityCollection* eec, const ToolOrdering::LayerTools& layer_tools, int object_copies_num);
+
+
                 std::vector<std::vector<unsigned int>> infills_per_copy_ids;    // indices of infill.entities that are not part of infill wiping (an element for each object copy)
                 std::vector<std::vector<unsigned int>> perimeters_per_copy_ids; // indices of infill.entities that are not part of infill wiping (an element for each object copy)
             };

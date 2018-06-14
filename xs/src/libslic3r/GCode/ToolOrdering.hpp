@@ -10,6 +10,34 @@ namespace Slic3r {
 class Print;
 class PrintObject;
 
+
+
+// Object of this class holds information about whether an extrusion is printed immediately
+// after a toolchange (as part of infill/perimeter wiping) or not. One extrusion can be a part
+// of several copies - this has to be taken into account.
+
+// TODO: change the ObjectByExtuder class so that there is one "virtual" extruder that we'll
+// use before any other - the infill/perimeter wiping will therefore need no extra care in
+// process_layer function!!! 
+class WipingExtrusions
+{
+public:
+    bool is_wiping_extrusion(const ExtrusionEntity* entity, int copy_id) const {
+        return (entity_map.find(entity) == entity_map.end() ? false : entity_map.at(entity).at(copy_id) != -1);
+    }
+    int  get_extruder_override(const ExtrusionEntity* entity, int copy_id) const;
+    void set_extruder_override(const ExtrusionEntity* entity, int copy_id, int extruder);
+
+
+private:
+    std::map<const ExtrusionEntity*, std::vector<int>> entity_map;
+    
+    PrintObject* last_object = nullptr;
+    int          last_copy   = -1;
+};
+
+
+
 class ToolOrdering 
 {
 public:
@@ -39,6 +67,11 @@ public:
 		// and to support the wipe tower partitions above this one.
 	    size_t                      wipe_tower_partitions;
 	    coordf_t 					wipe_tower_layer_height;
+
+        
+        // This holds list of extrusion that will be used for extruder wiping
+        WipingExtrusions wiping_extrusions;
+
 	};
 
 	ToolOrdering() {}
@@ -72,7 +105,7 @@ public:
 	std::vector<LayerTools>::const_iterator begin() const { return m_layer_tools.begin(); }
 	std::vector<LayerTools>::const_iterator end()   const { return m_layer_tools.end(); }
 	bool 				empty()       const { return m_layer_tools.empty(); }
-	const std::vector<LayerTools>& layer_tools() const { return m_layer_tools; }
+	std::vector<LayerTools>& layer_tools() { return m_layer_tools; }
 	bool 				has_wipe_tower() const { return ! m_layer_tools.empty() && m_first_printing_extruder != (unsigned int)-1 && m_layer_tools.front().wipe_tower_partitions > 0; }
 
 private:

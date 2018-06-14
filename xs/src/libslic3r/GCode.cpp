@@ -1245,18 +1245,7 @@ void GCode::process_layer(
                             point_inside_surface(i, perimeter_coll->first_point())) {
                             if (islands[i].by_region.empty())
                                 islands[i].by_region.assign(print.regions.size(), ObjectByExtruder::Island::Region());
-                            islands[i].by_region[region_id].perimeters.append(perimeter_coll->entities);
-
-                            // We just added perimeter_coll->entities.size() entities, if they are not to be printed before the main object (during infill wiping),
-                            // we will note their indices (for each copy separately):
-                            unsigned int first_added_entity_index = islands[i].by_region[region_id].perimeters.entities.size() - perimeter_coll->entities.size();
-                            for (unsigned copy_id = 0; copy_id < layer_to_print.object()->_shifted_copies.size(); ++copy_id) {
-                                if (islands[i].by_region[region_id].perimeters_per_copy_ids.size() < copy_id + 1)  // if this copy isn't in the list yet
-                                    islands[i].by_region[region_id].perimeters_per_copy_ids.push_back(std::vector<unsigned int>());
-                                if (!perimeter_coll->is_extruder_overridden(copy_id))
-                                    for (int j=first_added_entity_index; j<islands[i].by_region[region_id].perimeters.entities.size(); ++j)
-                                        islands[i].by_region[region_id].perimeters_per_copy_ids[copy_id].push_back(j);
-                            }
+                            islands[i].by_region[region_id].append("perimeters", perimeter_coll, layer_tools, layer_to_print.object()->_shifted_copies.size());
                             break;
                         }
                 }
@@ -1288,24 +1277,16 @@ void GCode::process_layer(
                             point_inside_surface(i, fill->first_point())) {
                             if (islands[i].by_region.empty())
                                 islands[i].by_region.assign(print.regions.size(), ObjectByExtruder::Island::Region());
-                            islands[i].by_region[region_id].infills.append(fill->entities);
-
-                            // We just added fill->entities.size() entities, if they are not to be printed before the main object (during infill wiping),
-                            // we will note their indices (for each copy separately):
-                            unsigned int first_added_entity_index = islands[i].by_region[region_id].infills.entities.size() - fill->entities.size();
-                            for (unsigned copy_id = 0; copy_id < layer_to_print.object()->_shifted_copies.size(); ++copy_id) {
-                                if (islands[i].by_region[region_id].infills_per_copy_ids.size() < copy_id + 1)  // if this copy isn't in the list yet
-                                    islands[i].by_region[region_id].infills_per_copy_ids.push_back(std::vector<unsigned int>());
-                                if (!fill->is_extruder_overridden(copy_id))
-                                    for (int j=first_added_entity_index; j<islands[i].by_region[region_id].infills.entities.size(); ++j)
-                                        islands[i].by_region[region_id].infills_per_copy_ids[copy_id].push_back(j);
-                            }
+                            islands[i].by_region[region_id].append("infills", fill, layer_tools, layer_to_print.object()->_shifted_copies.size());
                             break;
                         }
                 }
             } // for regions
         }
     } // for objects
+
+    // TODO: The by_region now stores perimeters/infills for all objects and copies, with information about which will be printed before
+    // Now we must somehow create the "virtual" extruder and assign the wiping extrusions to it.
 
     // Extrude the skirt, brim, support, perimeters, infill ordered by the extruders.
     std::vector<std::unique_ptr<EdgeGrid::Grid>> lower_layer_edge_grids(layers.size());
@@ -2535,6 +2516,42 @@ const std::vector<GCode::ObjectByExtruder::Island::Region>& GCode::ObjectByExtru
                 by_region_per_copy_cache.back().perimeters.append(*(reg.perimeters.entities[reg.perimeters_per_copy_ids[copy][i]]));
     }
     return by_region_per_copy_cache;
+}
+
+
+
+// This function takes the eec and appends its entities to either perimeters or infills of this Region (depending on the first parameter
+// It also fills in the internal vector to keep track which of the entities should be printed for which copy
+void GCode::ObjectByExtruder::Island::Region::append(std::string type, const ExtrusionEntityCollection* eec, const ToolOrdering::LayerTools& layer_tools, int object_copies_num)
+{
+    ExtrusionEntityCollection* perimeters_or_infills = &infills;
+    std::vector<std::vector<unsigned int>>* perimeters_or_infills_per_copy_ids = &infills_per_copy_ids;
+
+    if (type == "perimeters") {
+        perimeters_or_infills = &perimeters;
+        perimeters_or_infills_per_copy_ids = &perimeters_per_copy_ids;
+    }
+    else
+        if (type != "infills")
+            CONFESS("Unknown parameter!");
+
+
+    perimeters_or_infills->append(eec->entities);
+
+    // We just added eec->entities.size() entities, if they are not to be printed before the main object (during infill wiping),
+    // we will note their indices (for each copy separately):
+
+    unsigned int first_added_entity_index = perimeters_or_infills->entities.size() - eec->entities.size();
+    for (unsigned copy_id = 0; copy_id < object_copies_num; ++copy_id) {
+        if (perimeters_or_infills_per_copy_ids->size() < copy_id + 1)  // if this copy isn't in the list yet
+            perimeters_or_infills_per_copy_ids->push_back(std::vector<unsigned int>());
+
+        if (!layer_tools.wiping_extrusions.is_wiping_extrusion(eec, copy_id))
+            for (int j=first_added_entity_index; j<perimeters_or_infills->entities.size(); ++j)
+                (*perimeters_or_infills_per_copy_ids)[copy_id].push_back(j);
+    }
+
+
 }
 
 }   // namespace Slic3r

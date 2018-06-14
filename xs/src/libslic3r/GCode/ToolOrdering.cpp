@@ -330,4 +330,25 @@ void ToolOrdering::collect_extruder_statistics(bool prime_multi_material)
     }
 }
 
+
+void WipingExtrusions::set_extruder_override(const ExtrusionEntity* entity, int copy_id, int extruder)
+{
+    std::vector<bool>* copies = nullptr;
+
+    auto entity_it = entity_map.find(entity);
+    if (entity_it != entity_map.end()) {  // this entity is in the list already
+         // let's first pretend this never happens
+    }
+    else
+        entity_map[entity] = std::vector<int>{extruder};
+}
+
+
+int WipingExtrusions::get_extruder_override(const ExtrusionEntity* ee, int copy_id) const
+{
+    auto ee_it = entity_map.find(ee);
+    return (ee_it == entity_map.end() ? -1 : ee_it->second.at(copy_id));
+
+}
+
 } // namespace Slic3r

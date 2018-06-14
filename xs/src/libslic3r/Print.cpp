@@ -1121,13 +1121,8 @@ void Print::_make_wipe_tower()
             this->config.filament_ramming_parameters.get_at(i),
             this->config.nozzle_diameter.get_at(i));
 
-    // When printing the first layer's wipe tower, the first extruder is expected to be active and primed.
-    // Therefore the number of wipe sections at the wipe tower will be (m_tool_ordering.front().extruders-1) at the 1st layer.
-    // The following variable is true if the last priming section cannot be squeezed inside the wipe tower.
-    bool last_priming_wipe_full = m_tool_ordering.front().extruders.size() > m_tool_ordering.front().wipe_tower_partitions;
-
     m_wipe_tower_priming = Slic3r::make_unique<WipeTower::ToolChangeResult>(
-        wipe_tower.prime(this->skirt_first_layer_height(), m_tool_ordering.all_extruders(), ! last_priming_wipe_full));
+        wipe_tower.prime(this->skirt_first_layer_height(), m_tool_ordering.all_extruders(), false));
 
     reset_wiping_extrusions(); // if this is not the first time the wipe tower is generated, some extrusions might remember their last wiping status
 
@@ -1135,7 +1130,7 @@ void Print::_make_wipe_tower()
     // to pass to wipe_tower (so that it can use it for planning the layout of the tower)
     {
         unsigned int current_extruder_id = m_tool_ordering.all_extruders().back();
-        for (const auto &layer_tools : m_tool_ordering.layer_tools()) { // for all layers
+        for (auto &layer_tools : m_tool_ordering.layer_tools()) { // for all layers
             if (!layer_tools.has_wipe_tower) continue;
             bool first_layer = &layer_tools == &m_tool_ordering.front();
             wipe_tower.plan_toolchange(layer_tools.print_z, layer_tools.wipe_tower_layer_height, current_extruder_id, current_extruder_id,false);
@@ -1215,7 +1210,7 @@ void Print::reset_wiping_extrusions() {
 //            repeat until you run out of infills, leave perimeters be
 
 
-float Print::mark_wiping_extrusions(const ToolOrdering::LayerTools& layer_tools, unsigned int new_extruder, float volume_to_wipe)
+float Print::mark_wiping_extrusions(ToolOrdering::LayerTools& layer_tools, unsigned int new_extruder, float volume_to_wipe)
 {
     const float min_infill_volume = 0.f; // ignore infill with smaller volume than this
 
@@ -1262,6 +1257,7 @@ float Print::mark_wiping_extrusions(const ToolOrdering::LayerTools& layer_tools,
                                     break;
                                 if (!fill->is_extruder_overridden(copy) && fill->total_volume() > min_infill_volume) {     // this infill will be used to wipe this extruder
                                     fill->set_extruder_override(copy, new_extruder);
+                                    layer_tools.wiping_extrusions.set_extruder_override(fill, copy, new_extruder);
                                     volume_to_wipe -= fill->total_volume();
                                 }
                         }
@@ -1276,6 +1272,7 @@ float Print::mark_wiping_extrusions(const ToolOrdering::LayerTools& layer_tools,
                                     break;
                                 if (!fill->is_extruder_overridden(copy) && fill->total_volume() > min_infill_volume) {
                                     fill->set_extruder_override(copy, new_extruder);
+                                    layer_tools.wiping_extrusions.set_extruder_override(fill, copy, new_extruder);
                                     volume_to_wipe -= fill->total_volume();
                                 }
                         }
