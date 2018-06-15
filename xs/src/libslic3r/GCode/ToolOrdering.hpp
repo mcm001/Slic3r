@@ -25,15 +25,19 @@ public:
     bool is_wiping_extrusion(const ExtrusionEntity* entity, int copy_id) const {
         return (entity_map.find(entity) == entity_map.end() ? false : entity_map.at(entity).at(copy_id) != -1);
     }
-    int  get_extruder_override(const ExtrusionEntity* entity, int copy_id) const;
-    void set_extruder_override(const ExtrusionEntity* entity, int copy_id, int extruder);
+    //void set_extruder_override(const ExtrusionEntity*,int,int);
+    //int  get_extruder_override(const ExtrusionEntity*,int) const;
 
+    // This function is called from Print::mark_wiping_extrusions and sets extruder that it should be printed with (-1 .. as normal)
+    void set_extruder_override(const ExtrusionEntity* entity, unsigned int copy_id, int extruder, int num_of_copies);
+
+    // Returns desired extruder for this copy of the extrusion, or -1 if it is to be printed as usual.
+    int get_extruder_override(const ExtrusionEntity* entity, unsigned int copy_id) const;
+
+    const std::vector<int>* get_extruder_overrides(const ExtrusionEntity* entity) const;
 
 private:
     std::map<const ExtrusionEntity*, std::vector<int>> entity_map;
-    
-    PrintObject* last_object = nullptr;
-    int          last_copy   = -1;
 };
 
 
@@ -68,7 +72,7 @@ public:
 	    size_t                      wipe_tower_partitions;
 	    coordf_t 					wipe_tower_layer_height;
 
-        
+
         // This holds list of extrusion that will be used for extruder wiping
         WipingExtrusions wiping_extrusions;
 

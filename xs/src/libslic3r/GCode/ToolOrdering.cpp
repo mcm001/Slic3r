@@ -330,25 +330,36 @@ void ToolOrdering::collect_extruder_statistics(bool prime_multi_material)
     }
 }
 
+  // This function is called from Print::mark_wiping_extrusions and sets extruder that it should be printed with (-1 .. as normal)
+    void WipingExtrusions::set_extruder_override(const ExtrusionEntity* entity, unsigned int copy_id, int extruder, int num_of_copies) {
+        auto entity_map_it = (entity_map.insert(std::make_pair(entity, std::vector<int>()))).first; // (add and) return iterator
+        auto& copies_vector = entity_map_it->second;
+        if (copies_vector.size() < num_of_copies)
+            copies_vector.resize(num_of_copies, -1);
 
-void WipingExtrusions::set_extruder_override(const ExtrusionEntity* entity, int copy_id, int extruder)
-{
-    std::vector<bool>* copies = nullptr;
+        if (copies_vector[copy_id] != -1)
+            std::cout << "ERROR: Entity extruder overriden multiple times!!!\n";
 
-    auto entity_it = entity_map.find(entity);
-    if (entity_it != entity_map.end()) {  // this entity is in the list already
-         // let's first pretend this never happens
+        copies_vector[copy_id] = extruder;
     }
-    else
-        entity_map[entity] = std::vector<int>{extruder};
-}
+    
+    // Returns desired extruder for this copy of the extrusion, or -1 if it is to be printed as usual.
+    int WipingExtrusions::get_extruder_override(const ExtrusionEntity* entity, unsigned int copy_id) const {
+        auto entity_map_it = entity_map.find(entity);
+        if (entity_map_it == entity_map.end() || (*entity_map_it).second.size()-1 < copy_id)
+            return -1;
+        else
+            return (*entity_map_it).second[copy_id];
 
+    }
+    
+    const std::vector<int>* WipingExtrusions::get_extruder_overrides(const ExtrusionEntity* entity) const {
+        auto entity_map_it = entity_map.find(entity);
+        if (entity_map_it == entity_map.end())
+            return nullptr;
 
-int WipingExtrusions::get_extruder_override(const ExtrusionEntity* ee, int copy_id) const
-{
-    auto ee_it = entity_map.find(ee);
-    return (ee_it == entity_map.end() ? -1 : ee_it->second.at(copy_id));
-
-}
+        return &(entity_map_it->second);
+    }
+    
 
 } // namespace Slic3r
