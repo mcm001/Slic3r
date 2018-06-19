@@ -1147,7 +1147,6 @@ void GCode::process_layer(
 
     // Group extrusions by an extruder, then by an object, an island and a region.
     std::map<unsigned int, std::vector<ObjectByExtruder>> by_extruder;
-    
     for (const LayerToPrint &layer_to_print : layers) {
         if (layer_to_print.support_layer != nullptr) {
             const SupportLayer &support_layer = *layer_to_print.support_layer;
@@ -1225,8 +1224,53 @@ void GCode::process_layer(
                     continue;
                 const PrintRegion &region = *print.regions[region_id];
 
+
+
+                for (std::string entity_type("infills") ; entity_type != "done" ; entity_type = entity_type=="infills" ? "perimeters" : "done") {
+
+                    const ExtrusionEntitiesPtr& source_entities = entity_type=="infills" ? layerm->fills.entities : layerm->perimeters.entities;
+
+                    for (const ExtrusionEntity *ee : source_entities) {
+                        // fill represents infill extrusions of a single island.
+                        const auto *fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
+                        if (fill->entities.empty())
+                            // This shouldn't happen but first_point() would fail.
+                            continue;
+                        int correct_extruder_id = entity_type=="infills" ? std::max<int>(0, (is_solid_infill(fill->entities.front()->role()) ? region.config.solid_infill_extruder : region.config.infill_extruder) - 1) :
+                                                                           std::max<int>(region.config.perimeter_extruder.value - 1, 0);
+
+                        const ExtruderPerCopy* entity_overrides = layer_tools.wiping_extrusions.get_extruder_overrides(fill);
+
+                        // Now we must add this extrusion into the by_extruder map, once for each extruder that will print it:
+                        for (int extruder = 0; extruder<print.config.nozzle_diameter.size() ; ++extruder) {
+
+                            if ((extruder == correct_extruder_id && (!entity_overrides ||
+                                                                    std::find(entity_overrides->begin(), entity_overrides->end(), -1) != entity_overrides->end() ||
+                                                                    entity_overrides->size() < layer_to_print.object()->_shifted_copies.size())) ||
+                                 (entity_overrides && std::find(entity_overrides->begin(), entity_overrides->end(), extruder) != entity_overrides->end()))
+                            {
+                                // Init by_extruder item only if we actually use the extruder.
+                                std::vector<ObjectByExtruder::Island> &islands = object_islands_by_extruder(
+                                    by_extruder,
+                                    extruder,
+                                    &layer_to_print - layers.data(),
+                                    layers.size(), n_slices+1);
+                                for (size_t i = 0; i <= n_slices; ++i)
+                                    if (// fill->first_point does not fit inside any slice
+                                        i == n_slices ||
+                                        // fill->first_point fits inside ith slice
+                                        point_inside_surface(i, fill->first_point())) {
+                                        if (islands[i].by_region.empty())
+                                            islands[i].by_region.assign(print.regions.size(), ObjectByExtruder::Island::Region());
+                                        islands[i].by_region[region_id].append(entity_type, fill, entity_overrides, layer_to_print.object()->_shifted_copies.size());
+                                        break;
+                                    }
+                            }
+                        }
+                    }
+                }
                 // process perimeters
-                for (const ExtrusionEntity *ee : layerm->perimeters.entities) {
+                /*for (const ExtrusionEntity *ee : layerm->perimeters.entities) {
                     // perimeter_coll represents perimeter extrusions of a single island.
                     const auto *perimeter_coll = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                     if (perimeter_coll->entities.empty())
@@ -1236,9 +1280,6 @@ void GCode::process_layer(
                     int correct_extruder_id = std::max<int>(region.config.perimeter_extruder.value - 1, 0);
                     const ExtruderPerCopy* entity_overrides = layer_tools.wiping_extrusions.get_extruder_overrides(perimeter_coll);
 
-                    // If this extruder is in the list, some copy of the entity will be printed by this extruder - we will append it:
-                    if (entity_overrides && std::find(entity_overrides->begin(), entity_overrides->end(), correct_extruder_id) == entity_overrides->end())
-                        break;
 
                     // Init by_extruder item only if we actually use the extruder.
                     std::vector<ObjectByExtruder::Island> &islands = object_islands_by_extruder(
@@ -1273,30 +1314,48 @@ void GCode::process_layer(
                     int correct_extruder_id = std::max<int>(0, (is_solid_infill(fill->entities.front()->role()) ? region.config.solid_infill_extruder : region.config.infill_extruder) - 1);
                     const ExtruderPerCopy* entity_overrides = layer_tools.wiping_extrusions.get_extruder_overrides(fill);
 
-                    // If this extruder is in the list, some copy of the entity will be printed by this extruder - we will append it:
-                    if (entity_overrides && std::find(entity_overrides->begin(), entity_overrides->end(), correct_extruder_id) == entity_overrides->end())
-                        break;
+                    std::cout << "get_extruder_overrides:  ";
+                    if (entity_overrides)
+                        for (const auto& a : entity_overrides[0])
+                            std::cout << a << " ";
+                    else
+                        std::cout << "(prazdne)";
+                    std::cout << "\n";
 
-                    // Init by_extruder item only if we actually use the extruder.
-                    std::vector<ObjectByExtruder::Island> &islands = object_islands_by_extruder(
-                        by_extruder,
-                        correct_extruder_id,
-                        &layer_to_print - layers.data(),
-                        layers.size(), n_slices+1);
-                    for (size_t i = 0; i <= n_slices; ++i)
-                        if (// fill->first_point does not fit inside any slice
-                            i == n_slices ||
-                            // fill->first_point fits inside ith slice
-                            point_inside_surface(i, fill->first_point())) {
-                            if (islands[i].by_region.empty())
-                                islands[i].by_region.assign(print.regions.size(), ObjectByExtruder::Island::Region());
-                            islands[i].by_region[region_id].append("infills", fill, entity_overrides, layer_to_print.object()->_shifted_copies.size());
-                            break;
+
+                    // Now we must add this extrusion into the by_extruder map, once for each extruder that will print it:
+                    for (int extruder = 0; extruder<print.config.nozzle_diameter.size() ; ++extruder) {
+
+                        if ((extruder == correct_extruder_id && (!entity_overrides ||
+                                                                std::find(entity_overrides->begin(), entity_overrides->end(), -1) != entity_overrides->end() ||
+                                                                entity_overrides->size() < layer_to_print.object()->_shifted_copies.size())) ||
+                             (entity_overrides && std::find(entity_overrides->begin(), entity_overrides->end(), extruder) != entity_overrides->end()))
+                        {
+                            // Init by_extruder item only if we actually use the extruder.
+                            std::vector<ObjectByExtruder::Island> &islands = object_islands_by_extruder(
+                                by_extruder,
+                                extruder,
+                                &layer_to_print - layers.data(),
+                                layers.size(), n_slices+1);
+                            for (size_t i = 0; i <= n_slices; ++i)
+                                if (// fill->first_point does not fit inside any slice
+                                    i == n_slices ||
+                                    // fill->first_point fits inside ith slice
+                                    point_inside_surface(i, fill->first_point())) {
+                                    if (islands[i].by_region.empty())
+                                        islands[i].by_region.assign(print.regions.size(), ObjectByExtruder::Island::Region());
+                                    islands[i].by_region[region_id].append("infills", fill, entity_overrides, layer_to_print.object()->_shifted_copies.size());
+                                    break;
+                                }
                         }
-                }
+                    }*/
             } // for regions
         }
     } // for objects
+
+
+
+
 
     // TODO: The by_region now stores perimeters/infills for all objects and copies, with information about which will be printed before
     // Now we must somehow create the "virtual" extruder and assign the wiping extrusions to it.
@@ -1304,7 +1363,7 @@ void GCode::process_layer(
     // Extrude the skirt, brim, support, perimeters, infill ordered by the extruders.
     std::vector<std::unique_ptr<EdgeGrid::Grid>> lower_layer_edge_grids(layers.size());
     for (unsigned int extruder_id : layer_tools.extruders)
-    {   
+    {
         gcode += (layer_tools.has_wipe_tower && m_wipe_tower) ?
             m_wipe_tower->tool_change(*this, extruder_id, extruder_id == layer_tools.extruders.back()) :
             this->set_extruder(extruder_id);
@@ -1329,7 +1388,7 @@ void GCode::process_layer(
                     for (ExtrusionPath &path : loop.paths) {
                         path.height     = (float)layer.height;
                         path.mm3_per_mm = mm3_per_mm;
-                    }                
+                    }
                     gcode += this->extrude_loop(loop, "skirt", m_config.support_material_speed.value);
                 }
                 m_avoid_crossing_perimeters.use_external_mp = false;
@@ -1338,7 +1397,7 @@ void GCode::process_layer(
                     m_avoid_crossing_perimeters.disable_once = true;
             }
         }
-        
+
         // Extrude brim with the extruder of the 1st region.
         if (! m_brim_done) {
             this->set_origin(0., 0.);
@@ -1350,104 +1409,56 @@ void GCode::process_layer(
             // Allow a straight travel move to the first object point.
             m_avoid_crossing_perimeters.disable_once = true;
         }
-/*
-        if (layer_tools.has_wipe_tower)   // the infill/perimeter wiping to save the material on the wipe tower
-        {
-            gcode += "; INFILL WIPING STARTS\n";
-            if (extruder_id != layer_tools.extruders.front()) { // if this is the first extruder on this layer, there was no toolchange
-                for (const auto& layer_to_print : layers) {     // iterate through all objects
-                    if (layer_to_print.object_layer == nullptr)
-                        continue;
-
-                    m_config.apply((layer_to_print.object_layer)->object()->config, true);
-
-                    for (unsigned copy_id = 0; copy_id < layer_to_print.object()->copies().size(); ++copy_id) {
-                        std::vector<ObjectByExtruder::Island::Region> overridden;
-                        for (size_t region_id = 0; region_id < print.regions.size(); ++ region_id) {
-                            ObjectByExtruder::Island::Region new_region;
-                            overridden.push_back(new_region);
-                            for (ExtrusionEntity *ee : (*layer_to_print.object_layer).regions[region_id]->fills.entities) {
-                                auto *fill = dynamic_cast<ExtrusionEntityCollection*>(ee);
-                                if (fill->get_extruder_override(copy_id) == (int)extruder_id)
-                                        overridden.back().infills.append(*fill);
-                           }
-                           for (ExtrusionEntity *ee : (*layer_to_print.object_layer).regions[region_id]->perimeters.entities) {
-                                auto *fill = dynamic_cast<ExtrusionEntityCollection*>(ee);
-                                if (fill->get_extruder_override(copy_id) == (int)extruder_id)
-                                        overridden.back().perimeters.append((*fill).entities);
-                           }
-                        }
-
-                        Point copy = (layer_to_print.object_layer)->object()->_shifted_copies[copy_id];
-                        this->set_origin(unscale(copy.x), unscale(copy.y));
-
-
-                        std::unique_ptr<EdgeGrid::Grid> u;
-                        if (print.config.infill_first) {
-                            gcode += this->extrude_infill(print, overridden);
-                            gcode += this->extrude_perimeters(print, overridden, u);
-                        }
-                        else {
-                            gcode += this->extrude_perimeters(print, overridden, u);
-                            gcode += this->extrude_infill(print, overridden);
-                        }
-                    }
-                }
-            }
-            gcode += "; WIPING FINISHED\n";
-        }
-*/
 
 
         auto objects_by_extruder_it = by_extruder.find(extruder_id);
         if (objects_by_extruder_it == by_extruder.end())
             continue;
-        for (ObjectByExtruder &object_by_extruder : objects_by_extruder_it->second) {
-            const size_t       layer_id     = &object_by_extruder - objects_by_extruder_it->second.data();
-            const PrintObject *print_object = layers[layer_id].object();
-            if (print_object == nullptr)
-                // This layer is empty for this particular object, it has neither object extrusions nor support extrusions at this print_z.
-                continue;
+        for (int print_wipe_extrusions=1; print_wipe_extrusions>=0; --print_wipe_extrusions) {
+            for (ObjectByExtruder &object_by_extruder : objects_by_extruder_it->second) {
+                const size_t       layer_id     = &object_by_extruder - objects_by_extruder_it->second.data();
+                const PrintObject *print_object = layers[layer_id].object();
+                if (print_object == nullptr)
+                    // This layer is empty for this particular object, it has neither object extrusions nor support extrusions at this print_z.
+                    continue;
 
-            m_config.apply(print_object->config, true);
-            m_layer = layers[layer_id].layer();
-            if (m_config.avoid_crossing_perimeters)
-                m_avoid_crossing_perimeters.init_layer_mp(union_ex(m_layer->slices, true));
-            Points copies;
-            if (single_object_idx == size_t(-1)) 
-                copies = print_object->_shifted_copies;
-            else
-                copies.push_back(print_object->_shifted_copies[single_object_idx]);
-            // Sort the copies by the closest point starting with the current print position.
+                m_config.apply(print_object->config, true);
+                m_layer = layers[layer_id].layer();
+                if (m_config.avoid_crossing_perimeters)
+                    m_avoid_crossing_perimeters.init_layer_mp(union_ex(m_layer->slices, true));
+                Points copies;
+                if (single_object_idx == size_t(-1))
+                    copies = print_object->_shifted_copies;
+                else
+                    copies.push_back(print_object->_shifted_copies[single_object_idx]);
+                // Sort the copies by the closest point starting with the current print position.
 
-            unsigned int copy_id = 0;
-            for (const Point &copy : copies) {
-                // When starting a new object, use the external motion planner for the first travel move.
-                std::pair<const PrintObject*, Point> this_object_copy(print_object, copy);
-                if (m_last_obj_copy != this_object_copy)
-                    m_avoid_crossing_perimeters.use_external_mp_once = true;
-                m_last_obj_copy = this_object_copy;
-                this->set_origin(unscale(copy.x), unscale(copy.y));
-                if (object_by_extruder.support != nullptr) {
-                    m_layer = layers[layer_id].support_layer;
-                    gcode += this->extrude_support(
-                        // support_extrusion_role is erSupportMaterial, erSupportMaterialInterface or erMixed for all extrusion paths.
-                        object_by_extruder.support->chained_path_from(m_last_pos, false, object_by_extruder.support_extrusion_role));
-                    m_layer = layers[layer_id].layer();
-                }
-
-                bool parametr = print.config.wipe_tower_rotation_angle != 0.;
-
-                for (ObjectByExtruder::Island &island : object_by_extruder.islands) {
-                    if (print.config.infill_first) {
-                        gcode += this->extrude_infill(print, island.by_region_per_copy(copy_id, parametr));
-                        gcode += this->extrude_perimeters(print, island.by_region_per_copy(copy_id, parametr), lower_layer_edge_grids[layer_id]);
-                    } else {
-                        gcode += this->extrude_perimeters(print, island.by_region_per_copy(copy_id, parametr), lower_layer_edge_grids[layer_id]);
-                        gcode += this->extrude_infill(print, island.by_region_per_copy(copy_id, parametr));
+                unsigned int copy_id = 0;
+                for (const Point &copy : copies) {
+                    // When starting a new object, use the external motion planner for the first travel move.
+                    std::pair<const PrintObject*, Point> this_object_copy(print_object, copy);
+                    if (m_last_obj_copy != this_object_copy)
+                        m_avoid_crossing_perimeters.use_external_mp_once = true;
+                    m_last_obj_copy = this_object_copy;
+                    this->set_origin(unscale(copy.x), unscale(copy.y));
+                    if (object_by_extruder.support != nullptr) {
+                        m_layer = layers[layer_id].support_layer;
+                        gcode += this->extrude_support(
+                            // support_extrusion_role is erSupportMaterial, erSupportMaterialInterface or erMixed for all extrusion paths.
+                            object_by_extruder.support->chained_path_from(m_last_pos, false, object_by_extruder.support_extrusion_role));
+                        m_layer = layers[layer_id].layer();
                     }
+                    for (ObjectByExtruder::Island &island : object_by_extruder.islands) {
+                        if (print.config.infill_first) {
+                            gcode += this->extrude_infill(print, island.by_region_per_copy(copy_id, print_wipe_extrusions));
+                            gcode += this->extrude_perimeters(print, island.by_region_per_copy(copy_id, print_wipe_extrusions), lower_layer_edge_grids[layer_id]);
+                        } else {
+                            gcode += this->extrude_perimeters(print, island.by_region_per_copy(copy_id, print_wipe_extrusions), lower_layer_edge_grids[layer_id]);
+                            gcode += this->extrude_infill(print, island.by_region_per_copy(copy_id, print_wipe_extrusions));
+                        }
+                    }
+                    ++copy_id;
                 }
-                ++copy_id;
             }
         }
     }
@@ -2510,7 +2521,7 @@ Point GCode::gcode_to_point(const Pointf &point) const
 
 
 // Goes through by_region std::vector and returns reference to a subvector of entities, that are to be printed
-// during infill/perimeter wiping, or normally (depends on wiping_entities parameter which defaults to false)
+// during infill/perimeter wiping, or normally (depends on wiping_entities parameter, which defaults to false)
 const std::vector<GCode::ObjectByExtruder::Island::Region>& GCode::ObjectByExtruder::Island::by_region_per_copy(unsigned int copy, bool wiping_entities)
 {
     if (copy == last_copy && wiping_entities == last_wiping_entities)
@@ -2531,20 +2542,24 @@ const std::vector<GCode::ObjectByExtruder::Island::Region>& GCode::ObjectByExtru
             const std::vector<ExtruderPerCopy>& per_copy_ids = (iter ? reg.infills_per_copy_ids : reg.perimeters_per_copy_ids);
             ExtrusionEntityCollection&          target_eec   = (iter ? by_region_per_copy_cache.back().infills : by_region_per_copy_cache.back().perimeters);
 
-            if (!per_copy_ids.empty()) {
-                for (unsigned int i=0; i<per_copy_ids[copy].size(); ++i) {  // iterates through all infills that should be printed at normal time
-                    if (!wiping_entities)
-                        // let's append all entities that are in the list:
-                        target_eec.append(*(entities[per_copy_ids[copy][i]]));
-                    else {
-                        for (int k=(i==0 ? 0 : per_copy_ids[copy][i-1]+1)  ; k<(i!=per_copy_ids[copy].size()-1 ? per_copy_ids[copy][i] : entities.size()); ++k)
+            if (wiping_entities) {
+                if (per_copy_ids.empty())
+                    continue;
+                else {
+                    for (unsigned int i=0; i<per_copy_ids[copy].size() + 1; ++i) {  // iterates through all infills that should be printed at normal time
+                        for (unsigned int k=(i==0 ? 0 : per_copy_ids[copy][i-1]+1)  ; k<(i!=per_copy_ids[copy].size() ? per_copy_ids[copy][i] : entities.size()); ++k)
                             target_eec.append(*(entities[k]));
                     }
                 }
             }
-            else
-                if (wiping_entities)
+
+            if (!wiping_entities) {
+                if (per_copy_ids.empty())
                     target_eec.append(entities);
+                else
+                    for (unsigned int i=0; i<per_copy_ids[copy].size(); ++i)  // iterates through all infills that should be printed at normal time
+                        target_eec.append(*(entities[per_copy_ids[copy][i]]));
+            }
         }
     }
     return by_region_per_copy_cache;
@@ -2565,8 +2580,10 @@ void GCode::ObjectByExtruder::Island::Region::append(std::string type, const Ext
         perimeters_or_infills_per_copy_ids = &perimeters_per_copy_ids;
     }
     else
-        if (type != "infills")
+        if (type != "infills") {
             CONFESS("Unknown parameter!");
+            return;
+        }
 
 
     // First we append the entities, there are eec->entities.size() of them:
@@ -2581,9 +2598,10 @@ void GCode::ObjectByExtruder::Island::Region::append(std::string type, const Ext
         if (perimeters_or_infills_per_copy_ids->size() < copy_id + 1)  // if this copy isn't in the list yet
             perimeters_or_infills_per_copy_ids->push_back(std::vector<int>());
 
-        if (!copies_extruder || copies_extruder->size() < copy_id+1 || copies_extruder->at(copy_id)==-1)   // extruder for this copy not specified or not overridden
+        if (!copies_extruder || copies_extruder->size() < copy_id+1 || copies_extruder->at(copy_id)==-1) {  // extruder for this copy not specified or not overridden
             for (unsigned int j=first_added_entity_index; j<perimeters_or_infills->entities.size(); ++j)
                 (*perimeters_or_infills_per_copy_ids)[copy_id].push_back(j);
+        }
     }
 
 
