@@ -1,6 +1,5 @@
 #include "HexFile.hpp"
 
-#include <iostream>   // XXX
 #include <sstream>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -20,6 +19,30 @@ static HexFile::DeviceKind parse_device_kind(const std::string &str)
 	else if (str == "mk3") { return HexFile::DEV_MK3; }
 	else if (str == "mm-control") { return HexFile::DEV_MM_CONTROL; }
 	else { return HexFile::DEV_GENERIC; }
+}
+
+static size_t hex_num_sections(fs::ifstream &file)
+{
+	file.seekg(0);
+	if (! file.good()) {
+		return 0;
+	}
+
+	static const char *hex_terminator = ":00000001FF\r";
+	size_t res = 0;
+	std::string line;
+	while (getline(file, line, '\n').good()) {
+		// Account for LF vs CRLF
+		if (!line.empty() && line.back() != '\r') {
+			line.push_back('\r');
+		}
+
+		if (line == hex_terminator) {
+			res++;
+		}
+	}
+
+	return res;
 }
 
 HexFile::HexFile(fs::path path) :
@@ -58,9 +81,11 @@ HexFile::HexFile(fs::path path) :
 		return;
 	}
 
+	bool has_device_meta = false;
 	const auto device = ptree.find("device");
 	if (device != ptree.not_found()) {
 		this->device = parse_device_kind(device->second.data());
+		has_device_meta = true;
 	}
 
 	const auto model_id = ptree.find("model_id");
@@ -68,8 +93,13 @@ HexFile::HexFile(fs::path path) :
 		this->model_id = model_id->second.data();
 	}
 
-	std::cerr << "device: " << this->device << std::endl;
-	std::cerr << "model_id: " << this->model_id << std::endl;
+	if (! has_device_meta) {
+		// No device metadata, look at the number of 'sections'
+		if (hex_num_sections(file) == 2) {
+			// Looks like a pre-metadata l10n firmware for the MK3, assume that's the case
+			this->device = DEV_MK3;
+		}
+	}
 }
 
 
