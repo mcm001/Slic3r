@@ -41,19 +41,19 @@ export DISPLAY=:0.0
 ## if compiling headless add these: 
 ## apt-get install -y mesa-utils and libgl1-mesa-glx
 
-## clone Slic3r from Prusa3d
-#git clone https://github.com/prusa3d/Slic3r.git
+## clone Slic3r from S3l3ctor branch
+git clone https://github.com/mcm001/Slic3r.git
 cd Slic3r
-#git checkout 68cd514
+git checkout -b orgin/master
 
 export LDLOADLIBS=-lstdc++
 perl Build.PL
 perl Build.PL --gui
 
-#mkdir build
+mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make
-#ctest --verbose
+ctest --verbose
 
  
