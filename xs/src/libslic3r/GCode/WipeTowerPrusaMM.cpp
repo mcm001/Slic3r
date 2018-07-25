@@ -852,6 +852,7 @@ void WipeTowerPrusaMM::toolchange_Change(
 	case FLEX:  speed_override = 35; break;
 	default:    speed_override = 100;
 	}
+	writer.append("CHANGE_TOOL ");	
 	writer.set_tool(new_tool)
 	      .speed_override(speed_override)
 	      .flush_planner_queue();
