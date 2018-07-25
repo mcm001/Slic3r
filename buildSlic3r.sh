@@ -3,7 +3,7 @@
 ## Build Slic3r P.E. from source
 
 ## install system dependencies
-
+cd ~
 apt-get update && apt-get install -y \
     build-essential \
     cmake \
